@@ -3,20 +3,26 @@ from scraper import scrape_to_csv
 
 st.set_page_config(page_title="VC Portfolio Scraper", page_icon="🕸️")
 
-# ── custom font: Inter ───────────────────────────────────────────────
 st.markdown(
     """
     <style>
+    /* 1️⃣  pull Inter from Google Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-    html, body, [class*="css"] {
+    /* 2️⃣  apply to all Streamlit base elements */
+    html, body, [class^="css"]  {
         font-family: 'Inter', sans-serif !important;
+    }
+
+    /* 3️⃣  also catch markdown headings rendered inside st.markdown */
+    h1, h2, h3, h4, h5, h6 {
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 600;
     }
     </style>
     """,
-    unsafe_allow_html=True,   # ← don’t forget this comma
+    unsafe_allow_html=True
 )
-# ─────────────────────────────────────────────────────────────────────
 
 
 st.title("Rho VC Portfolio Scraper")
