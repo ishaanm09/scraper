@@ -2,7 +2,7 @@ import streamlit as st
 from scraper import scrape_to_csv
 
 st.set_page_config(page_title="VC Portfolio Scraper", page_icon="🕸️")
-st.title("VC Portfolio Scraper 🕸️")
+st.title("Rho VC Portfolio Scraper")
 
 url = st.text_input("Paste a VC portfolio URL:")
 if st.button("Scrape") and url:
