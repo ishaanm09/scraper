@@ -17,7 +17,7 @@ st.markdown(
     /* 3️⃣  also catch markdown headings rendered inside st.markdown */
     h1, h2, h3, h4, h5, h6 {
         font-family: 'Inter', sans-serif !important;
-        font-weight: 600;
+        font-weight: 400;
     }
     </style>
     """,
