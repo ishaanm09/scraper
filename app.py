@@ -3,20 +3,21 @@ from scraper import scrape_to_csv
 
 st.set_page_config(page_title="VC Portfolio Scraper", page_icon="🕸️")
 
-# ---- custom font: Inter --------------------------------------------------
+# ── custom font: Inter ───────────────────────────────────────────────
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-    html, body, [class*="css"]  {
+    html, body, [class*="css"] {
         font-family: 'Inter', sans-serif !important;
     }
     </style>
-    """
-    unsafe_allow_html=True
+    """,
+    unsafe_allow_html=True,   # ← don’t forget this comma
 )
-# -------------------------------------------------------------------------
+# ─────────────────────────────────────────────────────────────────────
+
 
 st.title("Rho VC Portfolio Scraper")
 
