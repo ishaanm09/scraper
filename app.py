@@ -24,6 +24,26 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+st.markdown(
+    """
+    <style>
+    /* 1️⃣  Load Inter from Google Fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    /* 2️⃣  Force Inter on absolutely everything */
+    html, body, *, ::placeholder, ::selection {
+        font-family: 'Inter', sans-serif !important;
+    }
+
+    /* 3️⃣  Make headings a hair bolder for contrast */
+    h1, h2, h3, h4, h5, h6 {
+        font-weight: 600 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 
 st.title("Rho VC Portfolio Scraper")
 
