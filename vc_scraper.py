@@ -1,54 +1,23 @@
-#!/usr/bin/env python3
-"""
-vc_scraper.py
-Scrape portfolio-company links from *any* VC page.
+# requirements.txt  (add these)
+# playwright
+# beautifulsoup4
+# tldextract
+# requests
 
-Examples
---------
-python vc_scraper.py https://pear.vc/companies/?query_filter_id=3&filter_slug=all-companies
-python vc_scraper.py https://elcap.xyz/portfolio
-python vc_scraper.py https://www.blackflag.vc/100
-python vc_scraper.py https://a16z.com/portfolio/
-"""
+# after installing:  playwright install  (downloads Chromium)
 
-import csv, html, re, sys
+import asyncio, csv, html, re, sys
 from urllib.parse import urljoin
 
-import requests
-import tldextract
+import requests, tldextract
 from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
 
-# ── tweakable knobs ───────────────────────────────────────────────────────────
-BLOCKLIST_DOMAINS = {
-    "linkedin", "twitter", "facebook", "instagram",
-    "medium", "github", "youtube", "notion", "airtable",
-    "calendar", "crunchbase", "google", "apple", "figma",
-}
-USER_AGENT = "Mozilla/5.0 (portfolio-scraper 0.3)"
-TIMEOUT = (5, 15)  # connect, read
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def normalize(url: str) -> str:
-    """Return an absolute-ish URL suitable for urljoin()."""
-    if not url:
-        return ""
-    if url.startswith("//"):                     # //example.com
-        return "https:" + url
-    return url                                   # leave /path and full URLs unchanged
-
-
-def fetch(url: str) -> str:
-    """GET helper with UA + timeout."""
-    return requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT).text
+# … [same BLOCKLIST_DOMAINS, USER_AGENT, TIMEOUT, normalize(), fetch() ] …
 
 
 def resolve_company_url(detail_url: str) -> str:
-    """
-    For VC sites whose cards point to an internal detail page,
-    scrape that page once and grab a 'Visit Website' external link.
-    Fallback: return the detail page itself.
-    """
+    """Same as before: fetch a profile page once, grab 'Visit Website'."""
     try:
         soup = BeautifulSoup(fetch(detail_url), "html.parser")
         btn = soup.find("a", string=re.compile(r"visit (website|site)", re.I))
@@ -59,36 +28,94 @@ def resolve_company_url(detail_url: str) -> str:
     return detail_url
 
 
-def extract_companies(page_url: str):
-    soup = BeautifulSoup(fetch(page_url), "html.parser")
-
+# ──────────────────────────  NEW: JS-rendered scrape  ────────────────────────
+def extract_with_playwright(page_url: str, headless: bool = True):
+    """
+    Use Chromium to click every card, capture the external link,
+    then feed the list back into the original BeautifulSoup pipeline
+    so block-lists / de-dupe still apply.
+    """
+    rows, seen = [], set()
     vc_domain = tldextract.extract(page_url).domain.lower()
-    seen, rows = set(), []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless)
+        page = browser.new_page()
+        page.goto(page_url, timeout=60000)
+        page.wait_for_load_state("networkidle")
+
+        # click "Load more" buttons until none left (if site has them)
+        while True:
+            try:
+                more = page.locator("text=/load more/i")
+                if more.count() == 0:
+                    break
+                more.first.click()
+                page.wait_for_load_state("networkidle")
+            except Exception:
+                break
+
+        # each company card presumed to be an <a> that opens a modal/page
+        cards = page.locator("a", has_text=re.compile(".", re.S))
+        for i in range(cards.count()):
+            try:
+                card = cards.nth(i)
+                with page.expect_navigation(wait_until="load", timeout=15000):
+                    card.click()
+            except Exception:
+                continue
+
+            # try to find an outbound link
+            link = page.locator("a", has_text=re.compile(r"visit (website|site)", re.I))
+            if link.count() == 0:
+                page.go_back()
+                continue
+
+            href = link.first.get_attribute("href")
+            page.go_back()
+
+            if not href:
+                continue
+            href = urljoin(page_url, normalize(html.unescape(href)))
+            dom = tldextract.extract(href).domain.lower()
+
+            if dom in BLOCKLIST_DOMAINS or dom == vc_domain or not dom or href in seen:
+                continue
+
+            name = card.inner_text().strip().replace("\n", " ") or dom.capitalize()
+            seen.add(href)
+            rows.append((name, href))
+
+        browser.close()
+    return rows
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def extract_companies(page_url: str):
+    """Try cheap requests/bs4 first; if result < 20 rows, fall back to Playwright."""
+    soup = BeautifulSoup(fetch(page_url), "html.parser")
+    vc_domain = tldextract.extract(page_url).domain.lower()
+    rows, seen = [], set()
 
     for a in soup.find_all("a", href=True):
-        raw_href = html.unescape(a["href"])
-        href = urljoin(page_url, normalize(raw_href))
+        raw = html.unescape(a["href"])
+        href = urljoin(page_url, normalize(raw))
         dom = tldextract.extract(href).domain.lower()
 
-        # skip socials / utility links early
-        if dom in BLOCKLIST_DOMAINS or not dom:
+        if dom in BLOCKLIST_DOMAINS or dom == vc_domain or not dom:
             continue
 
         name = re.sub(r"\s+", " ", a.get_text(" ", strip=True)) or dom.capitalize()
-
-        # internal profile → follow once
-        if dom == vc_domain:
-            href = resolve_company_url(href)
-            dom = tldextract.extract(href).domain.lower()
-
-        # still internal? drop it
-        if dom == vc_domain or not dom:
-            continue
-
         if href in seen:
             continue
         seen.add(href)
         rows.append((name, href))
+
+    # heuristic: if the quick scrape got less than 20 unique sites,
+    # the page probably needs JS rendering (like av.vc). Use Playwright.
+    if len(rows) < 20:
+        print("ℹ️  Few links found via static HTML; switching to Playwright…")
+        rows = extract_with_playwright(page_url)
 
     return rows
 
