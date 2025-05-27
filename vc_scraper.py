@@ -12,15 +12,15 @@ python vc_scraper.py https://www.av.vc/portfolio
 """
 
 # --- guarantee Chromium is present -----------------------------------
-import subprocess, pathlib, glob, os
+import subprocess, pathlib, glob, sys                 # ← add sys
 
-_cache = pathlib.Path.home() / ".cache" / "ms-playwright"
-need_browser = not glob.glob(str(_cache / "chromium-*/*/chrome-linux/headless_shell"))
+CACHE = pathlib.Path.home() / ".cache/ms-playwright"
+need_browser = not glob.glob(str(CACHE / "chromium-*/*/chrome-linux/headless_shell"))
 
 if need_browser:
     print("▶ First launch: downloading Playwright Chromium …")
     subprocess.run(
-        ["python", "-m", "playwright", "install", "--with-deps", "chromium"],
+        [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
         check=True,
     )
     print("✔ Chromium installed")
