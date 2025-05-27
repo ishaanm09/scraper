@@ -11,6 +11,7 @@ Usage
 -----
 python vc_scraper.py https://www.av.vc/portfolio
 """
+HEADLESS = True
 
 # ── stdlib ────────────────────────────────────────────────────────────
 import csv, html, re, sys
@@ -120,13 +121,16 @@ def extract_companies(page_url: str) -> List[Tuple[str, str]]:
         seen.add(href)
         rows.append((name, href))
 
-    # decide if we need Playwright
-    if soup.select_one(NEXT_LINK_SEL):        # pagination present
-        print("ℹ️  Pagination detected → switching to Playwright…")
-        rows = extract_with_playwright(page_url)
-    elif len(rows) < 20:                      # not many links found
-        print("ℹ️  Few links found → switching to Playwright…")
-        rows = extract_with_playwright(page_url)
+        # decide if we need Playwright
+    found_next = soup.select_one('a[rel="next"], a[aria-label="Next"], a.next')
+
+    if found_next:
+        print("ℹ️  Pagination detected → switching to Playwright")
+        return extract_with_playwright(page_url)
+
+    if len(rows) < 30:
+        print("ℹ️  Few links found → switching to Playwright")
+        return extract_with_playwright(page_url)
 
     return rows
 
