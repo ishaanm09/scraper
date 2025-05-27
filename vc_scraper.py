@@ -10,18 +10,30 @@ Example:
 """
 
 # ── ensure Chromium is present ───────────────────────────────────────
-import subprocess, pathlib, glob, sys
+import subprocess, pathlib, glob, sys, os
+
+# Check if we're in a deployment environment (like Streamlit Cloud)
+IS_DEPLOYMENT = any(key in os.environ for key in [
+    'STREAMLIT_SHARING_MODE', 'STREAMLIT_SERVER_PORT', 'GITHUB_ACTIONS', 
+    'HEROKU', 'VERCEL', 'RAILWAY', 'RENDER'
+])
 
 CACHE = pathlib.Path.home() / ".cache/ms-playwright"
 need_browser = not glob.glob(str(CACHE / "chromium-*/*/chrome-linux/headless_shell"))
 
-if need_browser:
-    print("▶ First launch: downloading Playwright Chromium …")
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
-        check=True,
-    )
-    print("✔ Chromium installed")
+if need_browser and not IS_DEPLOYMENT:
+    try:
+        print("▶ First launch: downloading Playwright Chromium …")
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "--with-deps", "chromium"],
+            check=True,
+        )
+        print("✔ Chromium installed")
+    except (subprocess.CalledProcessError, PermissionError) as e:
+        print(f"⚠️  Could not install Playwright automatically: {e}")
+        print("   Please run: pip install playwright && playwright install chromium")
+elif need_browser and IS_DEPLOYMENT:
+    print("ℹ️  Running in deployment environment - Playwright should be pre-installed")
 # ─────────────────────────────────────────────────────────────────────
 
 # ── config ───────────────────────────────────────────────────────────
@@ -63,49 +75,54 @@ def fetch(url: str) -> str:
 
 # ── Playwright pass ─────────────────────────────────────────────────
 def extract_with_playwright(page_url: str) -> List[Tuple[str, str]]:
-    rows, seen = [], set()
-    vc_dom = tldextract.extract(page_url).domain.lower()
+    try:
+        rows, seen = [], set()
+        vc_dom = tldextract.extract(page_url).domain.lower()
 
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=HEADLESS)
-        page    = browser.new_page(user_agent=USER_AGENT)
-        page.goto(page_url, timeout=60000)
-        page.wait_for_load_state("networkidle")
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=HEADLESS)
+            page    = browser.new_page(user_agent=USER_AGENT)
+            page.goto(page_url, timeout=60000)
+            page.wait_for_load_state("networkidle")
 
-        while True:
-            for card in page.locator(ROW_SEL).all():
-                name = card.inner_text().strip() or card.get_attribute("href").split("/")[-1]
-                with page.expect_navigation(wait_until="load", timeout=45000):
-                    card.click()
+            while True:
+                for card in page.locator(ROW_SEL).all():
+                    name = card.inner_text().strip() or card.get_attribute("href").split("/")[-1]
+                    with page.expect_navigation(wait_until="load", timeout=45000):
+                        card.click()
 
-                link = page.locator(VISIT_BTN_SEL)
-                href = link.get_attribute("href") if link.count() else ""
+                    link = page.locator(VISIT_BTN_SEL)
+                    href = link.get_attribute("href") if link.count() else ""
 
-                # fallback: first external link on the detail page
-                if not href:
-                    for a in page.locator("a[href^='http']").all():
-                        href = a.get_attribute("href")
-                        dom  = tldextract.extract(href).domain.lower()
-                        if dom and dom != vc_dom and dom not in BLOCKLIST_DOMAINS:
-                            break
+                    # fallback: first external link on the detail page
+                    if not href:
+                        for a in page.locator("a[href^='http']").all():
+                            href = a.get_attribute("href")
+                            dom  = tldextract.extract(href).domain.lower()
+                            if dom and dom != vc_dom and dom not in BLOCKLIST_DOMAINS:
+                                break
 
-                href = urljoin(page_url, normalize(href))
-                dom  = tldextract.extract(href).domain.lower()
-                if href and dom not in BLOCKLIST_DOMAINS and href not in seen:
-                    seen.add(href)
-                    rows.append((name, href))
+                    href = urljoin(page_url, normalize(href))
+                    dom  = tldextract.extract(href).domain.lower()
+                    if href and dom not in BLOCKLIST_DOMAINS and href not in seen:
+                        seen.add(href)
+                        rows.append((name, href))
 
-                page.go_back(timeout=30000)
-                page.wait_for_load_state("networkidle")
+                    page.go_back(timeout=30000)
+                    page.wait_for_load_state("networkidle")
 
-            if page.locator(NEXT_LINK_SEL).count():
-                page.locator(NEXT_LINK_SEL).click()
-                page.wait_for_load_state("networkidle")
-            else:
-                break
+                if page.locator(NEXT_LINK_SEL).count():
+                    page.locator(NEXT_LINK_SEL).click()
+                    page.wait_for_load_state("networkidle")
+                else:
+                    break
 
-        browser.close()
-    return rows
+            browser.close()
+        return rows
+    except Exception as e:
+        print(f"⚠️  Playwright failed: {e}")
+        print("   Falling back to basic HTML scraping...")
+        return []
 
 # ── master extractor ────────────────────────────────────────────────
 def extract_companies(url: str) -> List[Tuple[str, str]]:
@@ -138,10 +155,12 @@ def extract_companies(url: str) -> List[Tuple[str, str]]:
     # Need Playwright?
     if soup.select_one(NEXT_LINK_SEL):
         print("ℹ️  Pagination detected → switching to Playwright")
-        return extract_with_playwright(url)
+        playwright_results = extract_with_playwright(url)
+        return playwright_results if playwright_results else rows
     if len(rows) < 30:
         print("ℹ️  Few links found → switching to Playwright")
-        return extract_with_playwright(url)
+        playwright_results = extract_with_playwright(url)
+        return playwright_results if playwright_results else rows
 
     return rows
 
