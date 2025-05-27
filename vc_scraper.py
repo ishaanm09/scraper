@@ -65,6 +65,25 @@ def resolve_company_url(detail_url: str) -> str:
         pass
     return detail_url
 
+
+def extract_wp_portfolio(api_root: str) -> list[tuple[str, str]]:
+    """
+    Pull all portfolio posts via WP-REST; grab the external site from ACF
+    field 'company_website' if present, else fall back to the post link.
+    """
+    page  = 1
+    rows  = []
+    while True:
+        resp = requests.get(f"{api_root}?per_page=100&page={page}", timeout=TIMEOUT)
+        if resp.status_code >= 400:
+            break                      # no more pages
+        for post in resp.json():
+            name = post["title"]["rendered"].strip()
+            ext  = (post.get("acf", {}) or {}).get("company_website") or post["link"]
+            rows.append((name, ext))
+        page += 1
+    return rows
+
 # ────────────────────── Playwright fallback scrape ───────────────────
 
 def extract_with_playwright(page_url: str) -> list[tuple[str, str]]:
@@ -124,6 +143,11 @@ def extract_companies(page_url: str) -> list[tuple[str, str]]:
     soup       = BeautifulSoup(fetch(page_url), "html.parser")
     vc_domain  = tldextract.extract(page_url).domain.lower()
     rows, seen = [], set()
+
+    wp_api = page_url.rstrip("/").split("/portfolio")[0] + "/wp-json/wp/v2/portfolio"
+    if requests.head(wp_api, timeout=10).status_code == 200:
+        print("ℹ️  Using WordPress JSON API…")
+        return extract_wp_portfolio(wp_api)
 
     for a in soup.find_all("a", href=True):
         raw  = html.unescape(a["href"])
