@@ -13,6 +13,21 @@ import requests, tldextract
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+# vc_scraper.py  – keep this near the top, right after the imports/knobs
+import requests
+
+USER_AGENT = "Mozilla/5.0 (portfolio-scraper 0.3)"
+TIMEOUT    = (5, 15)           # connect, read  (seconds)
+
+def fetch(url: str) -> str:
+    """Download a page with a browser-like UA and reasonable timeouts."""
+    return requests.get(
+        url,
+        headers={"User-Agent": USER_AGENT},
+        timeout=TIMEOUT
+    ).text
+
+
 # … [same BLOCKLIST_DOMAINS, USER_AGENT, TIMEOUT, normalize(), fetch() ] …
 
 
