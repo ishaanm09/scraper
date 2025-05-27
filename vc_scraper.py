@@ -11,7 +11,7 @@ python vc_scraper.py https://www.blackflag.vc/100
 python vc_scraper.py https://a16z.com/portfolio/
 """
 
-import csv, html, io, re, sys
+import csv, html, re, sys
 from urllib.parse import urljoin
 
 import requests
@@ -24,20 +24,18 @@ BLOCKLIST_DOMAINS = {
     "medium", "github", "youtube", "notion", "airtable",
     "calendar", "crunchbase", "google", "apple", "figma",
 }
-USER_AGENT = "Mozilla/5.0 (portfolio-scraper 0.2)"
-TIMEOUT    = (5, 15)      # connect, read  (seconds)
+USER_AGENT = "Mozilla/5.0 (portfolio-scraper 0.3)"
+TIMEOUT = (5, 15)  # connect, read
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 def normalize(url: str) -> str:
-    """Return an https://… absolute-ish URL suitable for urljoin()."""
+    """Return an absolute-ish URL suitable for urljoin()."""
     if not url:
         return ""
-    if url.startswith("//"):
+    if url.startswith("//"):                     # //example.com
         return "https:" + url
-    if url.startswith("/"):
-        return "https://dummy" + url   # fixed later by urljoin
-    return url
+    return url                                   # leave /path and full URLs unchanged
 
 
 def fetch(url: str) -> str:
@@ -47,20 +45,18 @@ def fetch(url: str) -> str:
 
 def resolve_company_url(detail_url: str) -> str:
     """
-    For VC sites where <a> points to an internal profile page (e.g. a16z),
-    fetch that page once and scrape a 'Visit Website' style external link.
-    Fallback: return the detail URL itself.
+    For VC sites whose cards point to an internal detail page,
+    scrape that page once and grab a 'Visit Website' external link.
+    Fallback: return the detail page itself.
     """
     try:
-        d_html = fetch(detail_url)
-        d_soup = BeautifulSoup(d_html, "html.parser")
-        btn = d_soup.find("a", string=re.compile(r"visit (website|site)", re.I))
+        soup = BeautifulSoup(fetch(detail_url), "html.parser")
+        btn = soup.find("a", string=re.compile(r"visit (website|site)", re.I))
         if btn and btn.has_attr("href"):
-            href = urljoin(detail_url, normalize(html.unescape(btn["href"])))
-            return href
+            return urljoin(detail_url, normalize(html.unescape(btn["href"])))
     except Exception:
         pass
-    return detail_url  # fallback
+    return detail_url
 
 
 def extract_companies(page_url: str):
@@ -72,20 +68,20 @@ def extract_companies(page_url: str):
     for a in soup.find_all("a", href=True):
         raw_href = html.unescape(a["href"])
         href = urljoin(page_url, normalize(raw_href))
-        dom  = tldextract.extract(href).domain.lower()
+        dom = tldextract.extract(href).domain.lower()
 
-        # skip obvious utility links up-front
+        # skip socials / utility links early
         if dom in BLOCKLIST_DOMAINS or not dom:
             continue
 
         name = re.sub(r"\s+", " ", a.get_text(" ", strip=True)) or dom.capitalize()
 
-        # a16z-style internal profile page → follow once
+        # internal profile → follow once
         if dom == vc_domain:
             href = resolve_company_url(href)
-            dom  = tldextract.extract(href).domain.lower()
+            dom = tldextract.extract(href).domain.lower()
 
-        # ★ if it’s still internal after resolution, ignore it
+        # still internal? drop it
         if dom == vc_domain or not dom:
             continue
 
@@ -95,7 +91,6 @@ def extract_companies(page_url: str):
         rows.append((name, href))
 
     return rows
-
 
 
 def main():
