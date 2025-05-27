@@ -11,6 +11,14 @@ Example
 python vc_scraper.py https://www.av.vc/portfolio
 """
 
+import os, subprocess, pathlib
+BROWSER_PATH = pathlib.Path.home() / ".cache/ms-playwright"
+if not (BROWSER_PATH / "chromium-*").glob("*/chrome-linux/headless_shell"):
+    subprocess.run(
+        ["python", "-m", "playwright", "install", "--with-deps", "chromium"],
+        check=True
+    )
+
 # ── config ───────────────────────────────────────────────────────────
 HEADLESS = True           # set False locally to watch the browser
 USER_AGENT = "Mozilla/5.0 (vc-scraper 0.6)"
