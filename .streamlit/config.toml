@@ -1,4 +1,6 @@
-[tool]                        # <- Streamlit Cloud reads this block
-postInstall = """
-python -m playwright install --with-deps chromium
-"""
+[server]
+headless = true
+
+[runner]
+# run this *after* pip install
+postInstall = "python -m playwright install --with-deps chromium"
