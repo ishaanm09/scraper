@@ -72,14 +72,12 @@ def extract_companies(page_url: str):
     for a in soup.find_all("a", href=True):
         raw_href = html.unescape(a["href"])
         href = urljoin(page_url, normalize(raw_href))
+        dom  = tldextract.extract(href).domain.lower()
 
-        dom = tldextract.extract(href).domain.lower()
-
-        # skip empty / social / utility links
-        if not dom or dom in BLOCKLIST_DOMAINS:
+        # skip obvious utility links up-front
+        if dom in BLOCKLIST_DOMAINS or not dom:
             continue
 
-        # company name: prefer anchor text, fall back to domain
         name = re.sub(r"\s+", " ", a.get_text(" ", strip=True)) or dom.capitalize()
 
         # a16z-style internal profile page → follow once
@@ -87,13 +85,17 @@ def extract_companies(page_url: str):
             href = resolve_company_url(href)
             dom  = tldextract.extract(href).domain.lower()
 
-        # de-dupe on final URL
+        # ★ if it’s still internal after resolution, ignore it
+        if dom == vc_domain or not dom:
+            continue
+
         if href in seen:
             continue
         seen.add(href)
         rows.append((name, href))
 
     return rows
+
 
 
 def main():
