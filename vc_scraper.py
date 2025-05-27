@@ -11,13 +11,21 @@ Example
 python vc_scraper.py https://www.av.vc/portfolio
 """
 
-import os, subprocess, pathlib
-BROWSER_PATH = pathlib.Path.home() / ".cache/ms-playwright"
-if not (BROWSER_PATH / "chromium-*").glob("*/chrome-linux/headless_shell"):
+# --- guarantee Chromium is present -----------------------------------
+import subprocess, pathlib, glob, os
+
+_cache = pathlib.Path.home() / ".cache" / "ms-playwright"
+need_browser = not glob.glob(str(_cache / "chromium-*/*/chrome-linux/headless_shell"))
+
+if need_browser:
+    print("▶ First launch: downloading Playwright Chromium …")
     subprocess.run(
         ["python", "-m", "playwright", "install", "--with-deps", "chromium"],
-        check=True
+        check=True,
     )
+    print("✔ Chromium installed")
+# ---------------------------------------------------------------------
+
 
 # ── config ───────────────────────────────────────────────────────────
 HEADLESS = True           # set False locally to watch the browser
