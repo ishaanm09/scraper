@@ -1,6 +1,4 @@
-[server]
-headless = true
-
-[runner]
-# run this *after* pip install
-postInstall = "python -m playwright install --with-deps chromium"
+[runner]                       #  <- Section name must be runner
+postInstall = """
+python -m playwright install --with-deps chromium
+"""
