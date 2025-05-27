@@ -1,93 +1,89 @@
-# requirements.txt  (add these)
-# playwright
-# beautifulsoup4
-# tldextract
-# requests
+#!/usr/bin/env python3
+"""
+vc_scraper.py
+Scrape portfolio-company URLs from *any* VC portfolio page.
+Falls back to Playwright when JavaScript / modals hide the links.
 
-# after installing:  playwright install  (downloads Chromium)
+Example
+-------
+python vc_scraper.py https://www.av.vc/portfolio
+"""
 
-import asyncio, csv, html, re, sys
+# ── stdlib ────────────────────────────────────────────────────────────
+import csv, html, re, sys, time
 from urllib.parse import urljoin
-
-import requests, tldextract
+# ── third-party ───────────────────────────────────────────────────────
+import requests
+import tldextract
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright        # <- requires playwright
 
-# ── helpers you MUST keep near the top ───────────────────────────────────────
-import requests, html
-from urllib.parse import urljoin
+# ── knobs you might tweak later ───────────────────────────────────────
+BLOCKLIST_DOMAINS = {
+    "linkedin", "twitter", "facebook", "instagram",
+    "medium", "github", "youtube", "notion", "airtable",
+    "calendar", "crunchbase", "google", "apple", "figma",
+}
+USER_AGENT = "Mozilla/5.0 (portfolio-scraper 0.4)"
+TIMEOUT    = (5, 15)     # requests connect, read  (seconds)
+HEADLESS   = True        # set False while debugging Playwright locally
+# ──────────────────────────────────────────────────────────────────────
 
-USER_AGENT = "Mozilla/5.0 (portfolio-scraper 0.3)"
-TIMEOUT    = (5, 15)            # connect, read  (seconds)
+
+# ────────────────────────── helper functions ─────────────────────────
 
 def normalize(url: str) -> str:
-    """
-    Make sure we can safely urljoin() later.
-    - //foo.com  → https://foo.com
-    - /path      → /path   (left for urljoin to resolve)
-    - full URL   → unchanged
-    """
+    """Return an absolute-ish URL suitable for urljoin()."""
     if not url:
         return ""
-    if url.startswith("//"):
+    if url.startswith("//"):                 # scheme-relative → add https
         return "https:" + url
-    return url
+    return url                               # leave /path or full URLs
 
 def fetch(url: str) -> str:
-    """Download the page HTML with a browser-ish UA string and timeouts."""
-    return requests.get(
+    """GET helper with UA + timeout; returns HTML string."""
+    resp = requests.get(
         url,
         headers={"User-Agent": USER_AGENT},
-        timeout=TIMEOUT
-    ).text
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-
-# … [same BLOCKLIST_DOMAINS, USER_AGENT, TIMEOUT, normalize(), fetch() ] …
-
+        timeout=TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.text
 
 def resolve_company_url(detail_url: str) -> str:
-    """Same as before: fetch a profile page once, grab 'Visit Website'."""
+    """
+    For sites whose cards open an internal detail page (e.g. a16z),
+    fetch that page once and pull a “Visit Website” link.
+    Fallback: return the detail page itself.
+    """
     try:
         soup = BeautifulSoup(fetch(detail_url), "html.parser")
-        btn = soup.find("a", string=re.compile(r"visit (website|site)", re.I))
+        btn  = soup.find("a", string=re.compile(r"visit (website|site)", re.I))
         if btn and btn.has_attr("href"):
             return urljoin(detail_url, normalize(html.unescape(btn["href"])))
     except Exception:
         pass
     return detail_url
 
+# ────────────────────── Playwright fallback scrape ───────────────────
 
-# ──────────────────────────  NEW: JS-rendered scrape  ────────────────────────
-def extract_with_playwright(page_url: str, headless: bool = True):
-    """
-    Use Chromium to click every card, capture the external link,
-    then feed the list back into the original BeautifulSoup pipeline
-    so block-lists / de-dupe still apply.
-    """
+def extract_with_playwright(page_url: str) -> list[tuple[str, str]]:
+    """Render JS, click cards, grab external links."""
     rows, seen = [], set()
-    vc_domain = tldextract.extract(page_url).domain.lower()
+    vc_domain  = tldextract.extract(page_url).domain.lower()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
-        page = browser.new_page()
+        browser = p.chromium.launch(headless=HEADLESS)
+        page    = browser.new_page(user_agent=USER_AGENT)
         page.goto(page_url, timeout=60000)
         page.wait_for_load_state("networkidle")
 
-        # click "Load more" buttons until none left (if site has them)
-        while True:
-            try:
-                more = page.locator("text=/load more/i")
-                if more.count() == 0:
-                    break
-                more.first.click()
-                page.wait_for_load_state("networkidle")
-            except Exception:
-                break
+        # click any “Load more” buttons
+        while page.locator("text=/load more/i").count():
+            page.locator("text=/load more/i").first.click(timeout=10000)
+            page.wait_for_load_state("networkidle")
 
-        # each company card presumed to be an <a> that opens a modal/page
-        cards = page.locator("a", has_text=re.compile(".", re.S))
+        cards = page.locator("a", has_text=re.compile("."))   # every anchor
         for i in range(cards.count()):
             try:
                 card = cards.nth(i)
@@ -96,21 +92,22 @@ def extract_with_playwright(page_url: str, headless: bool = True):
             except Exception:
                 continue
 
-            # try to find an outbound link
+            # look for an outbound link in the modal / detail page
             link = page.locator("a", has_text=re.compile(r"visit (website|site)", re.I))
             if link.count() == 0:
                 page.go_back()
                 continue
 
-            href = link.first.get_attribute("href")
+            href = link.first.get_attribute("href") or ""
             page.go_back()
 
-            if not href:
-                continue
             href = urljoin(page_url, normalize(html.unescape(href)))
-            dom = tldextract.extract(href).domain.lower()
+            dom  = tldextract.extract(href).domain.lower()
 
-            if dom in BLOCKLIST_DOMAINS or dom == vc_domain or not dom or href in seen:
+            if (not dom or
+                dom == vc_domain or
+                dom in BLOCKLIST_DOMAINS or
+                href in seen):
                 continue
 
             name = card.inner_text().strip().replace("\n", " ") or dom.capitalize()
@@ -119,21 +116,23 @@ def extract_with_playwright(page_url: str, headless: bool = True):
 
         browser.close()
     return rows
-# ─────────────────────────────────────────────────────────────────────────────
 
+# ───────────────────────── main extraction logic ─────────────────────
 
-def extract_companies(page_url: str):
-    """Try cheap requests/bs4 first; if result < 20 rows, fall back to Playwright."""
-    soup = BeautifulSoup(fetch(page_url), "html.parser")
-    vc_domain = tldextract.extract(page_url).domain.lower()
+def extract_companies(page_url: str) -> list[tuple[str, str]]:
+    """Try static HTML first; if too few results, fall back to Playwright."""
+    soup       = BeautifulSoup(fetch(page_url), "html.parser")
+    vc_domain  = tldextract.extract(page_url).domain.lower()
     rows, seen = [], set()
 
     for a in soup.find_all("a", href=True):
-        raw = html.unescape(a["href"])
+        raw  = html.unescape(a["href"])
         href = urljoin(page_url, normalize(raw))
-        dom = tldextract.extract(href).domain.lower()
+        dom  = tldextract.extract(href).domain.lower()
 
-        if dom in BLOCKLIST_DOMAINS or dom == vc_domain or not dom:
+        if (not dom or
+            dom == vc_domain or
+            dom in BLOCKLIST_DOMAINS):
             continue
 
         name = re.sub(r"\s+", " ", a.get_text(" ", strip=True)) or dom.capitalize()
@@ -142,21 +141,21 @@ def extract_companies(page_url: str):
         seen.add(href)
         rows.append((name, href))
 
-    # heuristic: if the quick scrape got less than 20 unique sites,
-    # the page probably needs JS rendering (like av.vc). Use Playwright.
+    # heuristic: if fewer than 20 unique links, JS likely hides the rest
     if len(rows) < 20:
         print("ℹ️  Few links found via static HTML; switching to Playwright…")
         rows = extract_with_playwright(page_url)
 
     return rows
 
+# ───────────────────────────── CLI wrapper ───────────────────────────
 
-def main():
+def main() -> None:
     if len(sys.argv) != 2:
         print("Usage: python vc_scraper.py <portfolio-URL>")
         sys.exit(1)
 
-    url = sys.argv[1]
+    url = sys.argv[1] if sys.argv[1].startswith("http") else "https://" + sys.argv[1]
     companies = extract_companies(url)
 
     out_csv = "portfolio_companies.csv"
@@ -164,7 +163,6 @@ def main():
         csv.writer(f).writerows([("Company", "URL"), *companies])
 
     print(f"✅  {len(companies)} companies saved to {out_csv}")
-
 
 if __name__ == "__main__":
     main()
