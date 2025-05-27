@@ -8,6 +8,7 @@ Example
 -------
 python vc_scraper.py https://www.av.vc/portfolio
 """
+ 
 
 # ── stdlib ────────────────────────────────────────────────────────────
 import csv, html, re, sys, time
@@ -17,6 +18,8 @@ import requests
 import tldextract
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright        # <- requires playwright
+
+HEADLESS = False   
 
 # ── knobs you might tweak later ───────────────────────────────────────
 BLOCKLIST_DOMAINS = {
@@ -154,12 +157,18 @@ def extract_companies(page_url: str) -> list[tuple[str, str]]:
         seen.add(href)
         rows.append((name, href))
 
-    # heuristic: if fewer than 20 unique links, JS likely hides the rest
-    if len(rows) < 20:
-        print("ℹ️  Few links found via static HTML; switching to Playwright…")
-        rows = extract_with_playwright(page_url)
+has_next = soup.select_one('a[rel="next"]')   # detects “Next” button
 
-    return rows
+if has_next:
+    print("ℹ️  Pagination detected → switching to Playwright…")
+    rows = extract_with_playwright(page_url)
+
+elif len(rows) < 20:                          # fallback for other sites
+    print("ℹ️  Few links found → switching to Playwright…")
+    rows = extract_with_playwright(page_url)
+
+return rows
+
 
 # ───────────────────────────── CLI wrapper ───────────────────────────
 
