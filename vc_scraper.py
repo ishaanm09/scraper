@@ -87,54 +87,43 @@ def extract_wp_portfolio(api_root: str) -> list[tuple[str, str]]:
 # ────────────────────── Playwright fallback scrape ───────────────────
 
 def extract_with_playwright(page_url: str) -> list[tuple[str, str]]:
-    """Render JS, click cards, grab external links."""
     rows, seen = [], set()
-    vc_domain  = tldextract.extract(page_url).domain.lower()
+    vc_domain  = tldextract.extract(page_url).domain
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=HEADLESS)
         page    = browser.new_page(user_agent=USER_AGENT)
-        page.goto(page_url, timeout=60000)
-        page.wait_for_load_state("networkidle")
 
-        # click any “Load more” buttons
-        while page.locator("text=/load more/i").count():
-            page.locator("text=/load more/i").first.click(timeout=10000)
-            page.wait_for_load_state("networkidle")
+        # 1⃣ loop through ?page=1 … N
+        for pg in range(1, 30):                  # hard-cap 30 pages
+            url = f"{page_url}?page={pg}"
+            page.goto(url, timeout=60000)
+            page.wait_for_load_state('networkidle')
 
-        cards = page.locator("a", has_text=re.compile("."))   # every anchor
-        for i in range(cards.count()):
-            try:
-                card = cards.nth(i)
-                with page.expect_navigation(wait_until="load", timeout=15000):
-                    card.click()
-            except Exception:
-                continue
+            # break when we land on an empty page
+            if page.locator("text=No portfolio companies found").count():
+                break
 
-            # look for an outbound link in the modal / detail page
-            link = page.locator("a", has_text=re.compile(r"visit (website|site)", re.I))
-            if link.count() == 0:
-                page.go_back()
-                continue
+            # 2⃣ iterate every bullet row
+            for row in page.locator("li.portfolio-row").all():
+                name = row.inner_text().strip()
+                row.click()                       # opens modal, no nav
+                link = page.locator(
+                    "a:has-text('Visit Website')"
+                ).first.get_attribute("href") or ""
+                page.locator("button[aria-label='Close']").click()
 
-            href = link.first.get_attribute("href") or ""
-            page.go_back()
+                href = urljoin(page_url, normalize(link))
+                dom  = tldextract.extract(href).domain
 
-            href = urljoin(page_url, normalize(html.unescape(href)))
-            dom  = tldextract.extract(href).domain.lower()
-
-            if (not dom or
-                dom == vc_domain or
-                dom in BLOCKLIST_DOMAINS or
-                href in seen):
-                continue
-
-            name = card.inner_text().strip().replace("\n", " ") or dom.capitalize()
-            seen.add(href)
-            rows.append((name, href))
+                if not dom or dom == vc_domain or dom in BLOCKLIST_DOMAINS or href in seen:
+                    continue
+                seen.add(href)
+                rows.append((name, href))
 
         browser.close()
     return rows
+
 
 # ───────────────────────── main extraction logic ─────────────────────
 
