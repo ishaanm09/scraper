@@ -162,3 +162,9 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+#cursor 
+
+data = ["hello", "hello"]
+for x in data:
+    print(x)
