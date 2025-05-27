@@ -39,10 +39,12 @@ BLOCKLIST_DOMAINS = {
 
 # alumni-ventures selectors (override per-site if needed)
 # alumni-ventures selectors  (current as of 27 May 2025)
-ROW_SEL        = "li.portfolio-row"
-VISIT_BTN_SEL  = "a:has-text('Visit Website')"
-CLOSE_BTN_SEL  = "button.modal__close"
-NEXT_LINK_SEL  = "a.pagination__link--next, a[aria-label='Next'], a[href*='?page=']"
+# alumni-ventures selectors (current May-2025)
+ROW_SEL        = ".portfolio__grid a[href*='/portfolio/']"   # every card
+VISIT_BTN_SEL  = "a[data-cy='company-website']"              # dedicated button
+CLOSE_BTN_SEL  = "button.modal__close"                       # (unused now)
+NEXT_LINK_SEL  = "a.pagination__link--next"
+
 
 
 # ── stdlib / third-party ─────────────────────────────────────────────
@@ -68,7 +70,17 @@ def fetch(url: str) -> str:
     return resp.text
 
 # ── Playwright path ─────────────────────────────────────────────────-
+# --- replace your entire extract_with_playwright ---------------------
 def extract_with_playwright(page_url: str) -> List[Tuple[str, str]]:
+    """
+    Works for Alumni Ventures May-2025 markup:
+        • Each card is <a class="portfolio__card" href="/portfolio/<slug>">
+        • Detail page contains a single outbound link <a data-cy="company-website">
+    The routine:
+        1. visits ?page=N until no “Next” button
+        2. clicks every card, grabs the company site from the detail page
+        3. goes back, repeats
+    """
     rows, seen = [], set()
     vc_dom = tldextract.extract(page_url).domain.lower()
 
@@ -76,36 +88,50 @@ def extract_with_playwright(page_url: str) -> List[Tuple[str, str]]:
         browser = pw.chromium.launch(headless=HEADLESS)
         page    = browser.new_page(user_agent=USER_AGENT)
 
-        page.goto(page_url, timeout=60000)          # start on page 1
+        page.goto(page_url, timeout=60000)
         page.wait_for_load_state("networkidle")
 
         while True:
-            # scrape every row on the current page
-            for row in page.locator(ROW_SEL).all():
-                name = row.inner_text().strip()
-                row.click()                         # opens modal
-                link = page.locator(VISIT_BTN_SEL).first
+            # iterate all cards on the listing page
+            for card in page.locator(ROW_SEL).all():
+                name = card.inner_text().strip() or card.get_attribute("href").split("/")[-1]
+                with page.expect_navigation(wait_until="load", timeout=45000):
+                    card.click()
+
+                # preferred: dedicated "Visit Website" link
+                link = page.locator("a[data-cy='company-website']")
                 href = link.get_attribute("href") if link.count() else ""
-                page.locator(CLOSE_BTN_SEL).click()
+
+                # fallback: first external link on the page
+                if not href:
+                    for a in page.locator("a[href^='http']").all():
+                        href = a.get_attribute("href")
+                        dom  = tldextract.extract(href).domain.lower()
+                        if dom and dom != vc_dom and dom not in BLOCKLIST_DOMAINS:
+                            break
 
                 href = urljoin(page_url, normalize(href))
                 dom  = tldextract.extract(href).domain.lower()
 
-                if (not dom or dom == vc_dom or
-                    dom in BLOCKLIST_DOMAINS or href in seen):
-                    continue
-                seen.add(href)
-                rows.append((name, href))
+                if href and dom not in BLOCKLIST_DOMAINS and href not in seen:
+                    seen.add(href)
+                    rows.append((name, href))
 
-            # go to next portfolio page, if any
-            if page.locator(NEXT_LINK_SEL).count():
-                page.locator(NEXT_LINK_SEL).click()
+                page.go_back(timeout=30000)
+                page.wait_for_load_state("networkidle")
+
+            # click “Next” pagination if present, else break
+            next_btn = page.locator("a.pagination__link--next")
+            if next_btn.count():
+                next_btn.click()
                 page.wait_for_load_state("networkidle")
             else:
                 break
 
         browser.close()
     return rows
+
+# ---------------------------------------------------------------------
 
 # ── master extractor ────────────────────────────────────────────────
 def extract_companies(url: str) -> List[Tuple[str, str]]:
