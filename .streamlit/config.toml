@@ -1,4 +1,0 @@
-[runner]                       #  <- Section name must be runner
-postInstall = """
-python -m playwright install --with-deps chromium
-"""
